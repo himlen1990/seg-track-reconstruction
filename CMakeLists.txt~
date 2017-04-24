@@ -1,0 +1,42 @@
+cmake_minimum_required(VERSION 2.8.3)
+project(rgbd_seg)
+
+find_package(OpenCV 3 REQUIRED PATHS "/home/himlen/opencv3/build")
+
+set(GCOLIBS 
+gco/block.h
+gco/energy.h
+gco/GCoptimization.h
+gco/GCoptimization.cpp
+gco/graph.h
+gco/graph.cpp
+gco/LinkedBlockList.cpp
+gco/LinkedBlockList.h
+)
+
+#add_executable(example example.cpp ${GCOLIBS})
+
+#add_executable(segment_demo segment_demo.cpp)
+#target_link_libraries(segment_demo ${OpenCV_LIBS})
+
+add_executable(superpixel superpixel.cpp ${GCOLIBS})
+target_link_libraries(superpixel ${OpenCV_LIBS})
+
+
+add_executable(rawpixel rawpixel.cpp ${GCOLIBS})
+target_link_libraries(rawpixel ${OpenCV_LIBS})
+
+add_executable(rawpixel2 rawpixel2.cpp ${GCOLIBS})
+target_link_libraries(rawpixel2 ${OpenCV_LIBS})
+
+
+add_executable(rawpixelrgbd rawpixelrgbd.cpp ${GCOLIBS})
+target_link_libraries(rawpixelrgbd ${OpenCV_LIBS})
+
+add_executable(rawpixelrgbd2 rawpixelrgbd2.cpp ${GCOLIBS})
+target_link_libraries(rawpixelrgbd2 ${OpenCV_LIBS})
+
+
+add_executable(normal normal.cpp ${GCOLIBS})
+target_link_libraries(normal ${OpenCV_LIBS})
+

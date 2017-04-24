@@ -1,0 +1,4 @@
+/home/himlen/rgbd_seg/CMakeFiles/rawpixelrgbd.dir
+/home/himlen/rgbd_seg/CMakeFiles/normal.dir
+/home/himlen/rgbd_seg/CMakeFiles/rawpixel.dir
+/home/himlen/rgbd_seg/CMakeFiles/superpixel.dir

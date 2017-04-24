@@ -1,0 +1,436 @@
+//#include "stdafx.h"
+#include<opencv2/opencv.hpp>
+#include <opencv2/ximgproc.hpp>
+#include <opencv2/flann.hpp>
+#include<ctime>
+#include "gco/GCoptimization.h"
+using namespace cv;
+using namespace std;
+
+class rgbdSegment
+{
+
+public:
+  Mat _imageRGB;
+  Mat _imageD;
+  int _region_size;
+  int _MaxboundaryMargin;
+  int _imgHeight;
+  int _imgWidth;
+  Mat _imageLab;
+  Mat _labels;
+  Mat _maskfordebug;
+  std::vector<cv::Vec3f> _backgroundRGBClick, _foregroundRGB;
+  std::vector<float> _backgroundDepClick, _foregroundDep;
+
+
+  int numPixels;
+  int cues;
+  int numLabels;
+
+
+  rgbdSegment(){
+  }
+
+  void  init(const cv::Mat &RGB, const cv::Mat &Dep, bool depthRecover= true)//20,15
+  {
+    _imageRGB = RGB;
+
+    _imageD = cv::Mat(Dep.size(),CV_32FC1,Scalar::all(0));
+
+    for(int i=0; i<_imageD.rows; i++)
+      for(int j=0; j<_imageD.cols; j++)
+	{
+	  _imageD.at<float>(i,j)=Dep.at<ushort>(i,j)/1000.0;
+	}
+
+    
+
+    _imgHeight = _imageRGB.rows;
+    _imgWidth = _imageRGB.cols;
+
+    numPixels = _imgHeight*_imgWidth;
+    cues = 2;
+    numLabels = 2*cues;
+
+    cvtColor(_imageRGB,_imageLab,CV_RGB2Lab);
+
+  }
+
+
+  float rgbDis(cv::Vec3b &v1,cv::Vec3b &v2)
+  {
+    return  cv::norm(v1,v2,cv::NORM_L2);
+  }
+
+
+  float depthDis(float d1, float d2)
+  {
+    return  cv::abs(d1-d2);
+  }
+
+  float calImgVar(const cv::Mat &img)
+  {
+    float imgvar=0;
+    Scalar mean,dev; 
+    if (img.type()==CV_8UC3)
+      { 
+	Mat imageGray;
+	cv::cvtColor(img,imageGray,CV_RGB2GRAY);
+	cv::meanStdDev(imageGray, mean, dev);  
+	imgvar = dev.val[0]*dev.val[0];
+      }
+    else
+      {
+	cv::meanStdDev(img, mean, dev);  
+        imgvar = dev.val[0]*dev.val[0];
+      }
+    return imgvar;
+  }
+
+  void getPotentialBG(std::vector<cv::Vec3f> &backgroundRGB, std::vector<float> &backgroundDep,  flann::Index &kdtreeFGDep,  flann::SearchParams &params)
+  {
+
+
+    vector<int> indicesFG(1);
+    vector<float> distsFG(1);
+    vector<float> query(1);
+
+        for(int i=0; i<_imgHeight; i++)
+      {
+
+
+	query[0]=_imageD.at<float>(i,0);
+
+	kdtreeFGDep.knnSearch(query, indicesFG, distsFG, 1, params);
+
+	if( abs(distsFG[0])>0.5)
+	  {	
+	    backgroundRGB.push_back(cv::Vec3f(_imageLab.at<cv::Vec3b>(i,0)[0],
+					      _imageLab.at<cv::Vec3b>(i,0)[1],
+					      _imageLab.at<cv::Vec3b>(i,0)[2]));
+	    backgroundDep.push_back(_imageD.at<float>(i,0));
+	    _imageRGB.at<cv::Vec3b>(i,0) = cv::Vec3b(255,0,0);
+	  }
+
+	query[0]=_imageD.at<float>(i,_imageRGB.cols-1);
+
+	kdtreeFGDep.knnSearch(query, indicesFG, distsFG, 1, params);
+	if( abs(distsFG[0])>0.5)
+	  {
+	    backgroundRGB.push_back(cv::Vec3f(_imageLab.at<cv::Vec3b>(i,_imageRGB.cols-1)[0],
+					      _imageLab.at<cv::Vec3b>(i,_imageRGB.cols-1)[1],
+					      _imageLab.at<cv::Vec3b>(i,_imageRGB.cols-1)[2]));
+	    backgroundDep.push_back(_imageD.at<float>(i,_imageRGB.cols-1));
+	    _imageRGB.at<cv::Vec3b>(i,_imageRGB.cols-1) = cv::Vec3b(255,0,0);
+	  }
+	
+      }
+
+        for(int i=0; i<_imgWidth; i++)
+      {
+
+	query[0]=_imageD.at<float>(0,i);
+
+	kdtreeFGDep.knnSearch(query, indicesFG, distsFG, 1, params);
+	if( abs(distsFG[0])>0.3)
+	  {	
+	    backgroundRGB.push_back(cv::Vec3f(_imageLab.at<cv::Vec3b>(0,i)[0],
+					      _imageLab.at<cv::Vec3b>(0,i)[1],
+					      _imageLab.at<cv::Vec3b>(0,i)[2]));
+	    backgroundDep.push_back(_imageD.at<float>(0,i));
+	    _imageRGB.at<cv::Vec3b>(0,i) = cv::Vec3b(255,0,0);
+	  }
+
+	query[0]=_imageD.at<float>(_imageRGB.rows-1,i);
+
+	kdtreeFGDep.knnSearch(query, indicesFG, distsFG, 1, params);
+	if( abs(distsFG[0])>0.3)
+	  {
+	    backgroundRGB.push_back(cv::Vec3f(_imageLab.at<cv::Vec3b>(_imageRGB.rows-1,i)[0],
+					      _imageLab.at<cv::Vec3b>(_imageRGB.rows-1,i)[1],
+					      _imageLab.at<cv::Vec3b>(_imageRGB.rows-1,i)[2]));
+	    backgroundDep.push_back(_imageD.at<float>(_imageRGB.rows-1,i));
+	    _imageRGB.at<cv::Vec3b>(_imageRGB.rows-1,i) = cv::Vec3b(255,0,0);
+	  }
+	
+      }
+	
+	/*    for(int i=0; i<_imgWidth; i++)
+      {
+	background.push_back(cv::Vec2f(0,i));
+	background.push_back(cv::Vec2f(_imageRGB.rows-1,i));
+	}*/
+
+  }
+  
+  void process()
+  {
+    std::vector<cv::Vec3f> _backgroundRGB  ;
+    std::vector<float> _backgroundDep ;
+    float rgbDisBG,rgbDisFG,depthDisBG,depthDisFG;
+    int *result = new int[numPixels];
+    float *data = new float[numPixels*numLabels];
+
+    int testcounter1;
+    int testcounter2;
+
+    flann::KDTreeIndexParams indexParams(2);
+    flann::SearchParams params(128);
+
+
+    flann::Index kdtreeFGRGB(cv::Mat(_foregroundRGB).reshape(1), indexParams);
+    vector<int> indicesFGRGB(1);
+    vector<float> distsFGRGB(1);
+
+    flann::Index kdtreeFGDep(cv::Mat(_foregroundDep).reshape(1), indexParams);
+    vector<int> indicesFGDep(1);
+    vector<float> distsFGDep(1);
+
+
+    getPotentialBG(_backgroundRGB, _backgroundDep , kdtreeFGDep, params);
+    _backgroundRGB.insert(_backgroundRGB.end(),_backgroundRGBClick.begin(),_backgroundRGBClick.end());
+    _backgroundDep.insert(_backgroundDep.end(),_backgroundDepClick.begin(),_backgroundDepClick.end());
+    imshow("showboundary", _imageRGB);
+    cout<<"_backgroundDep size"<<_backgroundDep.size()<<endl;
+
+    flann::Index kdtreeBGRGB(cv::Mat(_backgroundRGB).reshape(1), indexParams);
+    vector<int> indicesBGRGB(1);
+    vector<float> distsBGRGB(1);
+
+    flann::Index kdtreeBGDep(cv::Mat(_backgroundDep).reshape(1), indexParams);
+    vector<int> indicesBGDep(1);
+    vector<float> distsBGDep(1);
+
+
+
+    for(int i=0; i<_imgHeight; i++)
+      {
+	for(int j=0; j<_imgWidth; j++)
+	{
+
+	  vector<float> queryRGB(3);
+	  queryRGB[0]=_imageLab.at<cv::Vec3b>(i,j)[0];
+	  queryRGB[1]=_imageLab.at<cv::Vec3b>(i,j)[1];
+	  queryRGB[2]=_imageLab.at<cv::Vec3b>(i,j)[2];
+
+	  vector<float> queryDep(1);
+	  queryDep[0]=_imageD.at<float>(i,j);
+
+
+	  kdtreeBGRGB.knnSearch(queryRGB, indicesBGRGB, distsBGRGB, 1,params);
+	  kdtreeFGRGB.knnSearch(queryRGB, indicesFGRGB, distsFGRGB, 1,params);
+	  cv::Vec3b foregroundRGB, backgroundRGB, pixelRGB;
+
+	  rgbDisBG = std::sqrt(distsBGRGB[0]);
+	  rgbDisFG = std::sqrt(distsFGRGB[0]);
+	  
+
+	  kdtreeBGDep.knnSearch(queryDep, indicesBGDep, distsBGDep, 1,params);
+	  kdtreeFGDep.knnSearch(queryDep, indicesFGDep, distsFGDep, 1,params);
+
+	  float foregroundD, backgroundD, pixelD;
+
+	  depthDisBG = std::abs(distsBGDep[0]);
+	  depthDisFG = std::abs(distsFGDep[0]);
+	  
+	  //cout<<"depthbg "<<depthDisBG<<endl;
+	  //cout<<"depthfg "<<depthDisFG<<endl;
+
+	  for (int k=0; k<numLabels; k++)
+	    {
+	      int pixelindex = i*_imgWidth + j;
+
+	      if (k==0)//rgb 
+		{
+		data[pixelindex*numLabels+k] = rgbDisBG/(rgbDisFG+rgbDisBG);	
+		}
+	      else if(k==1)
+		{
+		data[pixelindex*numLabels+k] = rgbDisFG/(rgbDisFG+rgbDisBG);
+		}
+	      else if(k==2)
+		{
+		data[pixelindex*numLabels+k] = depthDisBG/(depthDisFG+depthDisBG);
+		}
+	      else if(k==3)
+		{
+		data[pixelindex*numLabels+k] = depthDisFG/(depthDisFG+depthDisBG);
+		}
+	      
+	    }
+	}
+      }//end of for(int i=0)
+
+
+    float *smooth = new float[numLabels*numLabels];
+    for ( int l1 = 0; l1 < numLabels; l1++ )
+      for (int l2 = 0; l2 < numLabels; l2++ )
+	{
+	  if (l2 == l1)
+	    smooth[l1+l2*numLabels] = 0;
+	  else
+	    smooth[l1+l2*numLabels] = 1.0;
+	}
+    smooth[2] = 5.0;
+    smooth[3] = 5.0;
+    smooth[6] = 5.0;
+    smooth[7] = 5.0;
+    smooth[8] = 5.0;
+    smooth[9] = 5.0;
+    smooth[12] = 5.0;
+    smooth[13] = 5.0;
+
+
+    try{
+      GCoptimizationGeneralGraph *gc = new GCoptimizationGeneralGraph(numPixels,numLabels);
+
+      gc->setDataCost(data);
+      gc->setSmoothCost(smooth);
+
+      float Imgvar=calImgVar(_imageRGB);
+#if 1
+      for(int i=0; i<_imgHeight-1; i++)
+      {
+	for(int j=0; j<_imgWidth-1; j++)
+	{
+	  int p=i*_imgWidth+j;
+	  int right=i*_imgWidth+j+1;
+	  int bottom = (i+1)*_imgWidth+j;
+	  float Disrgb_ij = rgbDis(_imageLab.at<cv::Vec3b>(i,j),_imageLab.at<cv::Vec3b>(i+1,j));
+	  float DisDep_ij = depthDis(_imageD.at<float>(i,j),_imageD.at<float>(i+1,j));
+
+	  float Gij;
+	  if(Disrgb_ij>DisDep_ij)
+	    {   Gij=cv::exp(-(Disrgb_ij* Disrgb_ij)/(2*Imgvar));
+	      testcounter1++;
+	    }
+	  else
+	    {
+	    Gij=cv::exp(-(DisDep_ij* DisDep_ij)/(2*Imgvar));
+	      testcounter2++;
+	    }
+          gc->setNeighbors(p,bottom,Gij);
+
+	  
+	  Disrgb_ij = rgbDis(_imageLab.at<cv::Vec3b>(i,j),_imageLab.at<cv::Vec3b>(i,j+1));
+	  DisDep_ij = depthDis(_imageD.at<float>(i,j),_imageD.at<float>(i,j+1));
+
+	  if(Disrgb_ij>DisDep_ij)
+	    {  Gij=cv::exp(-(Disrgb_ij* Disrgb_ij)/(2*Imgvar));
+	      testcounter1++;
+	    }
+	  else
+	    {
+	    Gij=cv::exp(-(DisDep_ij* DisDep_ij)/(2*Imgvar));
+	    testcounter2++;
+	    }
+          gc->setNeighbors(p,right,Gij);
+
+	}
+      }
+#endif
+      cout<<testcounter1<<" counter "<<testcounter2<<endl;;
+      cout<<"Before optimization energy is"<<gc->compute_energy()<<endl;
+      gc->swap(2);
+      cout<<"after optimization energy is"<<gc->compute_energy()<<endl;
+      
+      for(int i=0; i< numPixels; i++)
+	{
+	  result[i] = gc->whatLabel(i);
+	}
+      
+      delete gc;
+    }
+    catch(GCException e)
+      {
+	e.Report();
+      }
+    
+    Mat segmented(_imgHeight,_imgWidth,CV_8UC3,cv::Scalar(0,0,0));
+    for(int i=0; i<_imgHeight; i++)
+      {
+	for(int j=0; j<_imgWidth; j++)
+	{
+	  if(result[i*_imgWidth+j]==1)
+	    segmented.at<Vec3b>(i,j)=cv::Vec3b(255,0,0);//_imageRGB.at<Vec3b>(i,j);
+	  //if(result[i*_imgWidth+j]==2)
+	  // segmented.at<Vec3b>(i,j)=cv::Vec3b(0,255,0);
+	  if(result[i*_imgWidth+j]==3)
+	    segmented.at<Vec3b>(i,j)=_imageRGB.at<Vec3b>(i,j);//cv::Vec3b(0,0,255);
+
+	}
+      }
+
+
+
+    imshow("mask2", segmented);
+    
+  }
+  
+  void mouseClick(int event, int x, int y, int flags, void*)
+  {
+    switch(event)
+      {
+      case EVENT_LBUTTONDOWN:  //set foreground;
+	{
+	  float row = y;
+	  float col = x;
+	  _foregroundRGB.push_back(cv::Vec3f(_imageLab.at<cv::Vec3b>(row,col)[0],
+					     _imageLab.at<cv::Vec3b>(row,col)[1],
+					     _imageLab.at<cv::Vec3b>(row,col)[2]));
+	  _foregroundDep.push_back(_imageD.at<float>(row,col));
+	  cout<<"FGsize"<<_foregroundDep.size()<<endl;
+	}
+	break;
+      case EVENT_RBUTTONDOWN:  //set background;
+	{
+	  float row = y;
+	  float col = x;
+	  _backgroundRGBClick.push_back(cv::Vec3f(_imageLab.at<cv::Vec3b>(row,col)[0],
+						   _imageLab.at<cv::Vec3b>(row,col)[1],
+						   _imageLab.at<cv::Vec3b>(row,col)[2]));
+	  _backgroundDepClick.push_back(_imageD.at<float>(row,col));
+	  cout<<"BGsize"<<_backgroundDepClick.size()<<endl;
+	}
+	break;
+
+      }
+  } 
+};
+
+rgbdSegment rs;
+
+void on_mouse(int event, int x, int y, int flags, void* param)
+{
+  rs.mouseClick(event,x,y,flags,param);
+}
+
+
+int main(int argc, char** argv)
+{
+  if(argc<3)
+    {
+      cout<<"please input file name"<<endl;
+      return 0;
+    }
+  Mat rgb = imread(argv[1]);
+  Mat depth = imread(argv[2],CV_16UC1);
+
+
+
+  rs.init(rgb,depth);
+  const string winName = "image";
+  namedWindow( winName, WINDOW_AUTOSIZE );
+  setMouseCallback( winName, on_mouse, 0 );
+  imshow("image",rgb);
+  while(1)
+    {
+  char c = waitKey(0);
+    if(c=='n')
+      {
+      rs.process();
+      }
+    }
+  return 0;
+}
